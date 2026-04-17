@@ -29,19 +29,21 @@ For GPU-related work, follow the Slurm workflow from the referenced guide:
    - If `SLURM_JOB_ID` is set, or `nvidia-smi` is available, treat the current shell as a worker node.
    - Otherwise, treat it as a login node.
 3. If you are on a login node, launch GPU commands through Slurm:
-   - Prefer `eai-run -i -J ralph/<job-name> --pty ...` when `eai-run` is installed.
-   - Otherwise fall back to raw `srun` with a single GPU allocation and a 4 hour max runtime.
+   - Use the `interactive` partition so the job gets the highest priority available for this workflow.
+   - Use raw `srun`, explicitly passing `--partition interactive`, a single GPU allocation, and `--time 00:10:00`.
 4. If you submit a Slurm job, monitor it with `squeue`:
    - Check every 1 minute if the expected launch time is within 5 minutes.
    - Check every 5 minutes otherwise.
+5. Keep the Slurm request short: use `--time 00:10:00` for this project so allocation overhead and the 5 minute training run fit inside the request.
 
 Concrete launch rules:
 
 - `uv run train.py` on a worker node is fine.
 - `uv run train.py` on a login node must be wrapped via Slurm, for example:
-  - `eai-run -i -J ralph/autoresearch-baseline --pty bash -lc 'uv run train.py > run.log 2>&1'`
-  - If `eai-run` is unavailable, use `srun ... --pty bash -lc 'uv run train.py > run.log 2>&1'`
+  - `srun --account nvr_elm_llm --partition interactive --job-name nvr_elm_llm:dev/autoresearch-baseline --nodes 1 --gpus-per-node 1 --time 00:10:00 --pty bash -lc 'uv run train.py > run.log 2>&1'`
 - GPU diagnostics such as `nvidia-smi` should follow the same rule: run directly on a worker node, otherwise wrap with Slurm.
+- Keep the redirection inside the wrapped shell command so the log is written from the allocated worker node.
+- The 5 minute training budget starts after Slurm allocates the worker, not when the job is submitted from the login node.
 
 **What you CAN do:**
 - Modify `train.py` — this is the only file you edit. Everything is fair game: model architecture, optimizer, hyperparameters, training loop, batch size, model size, etc.
@@ -112,14 +114,14 @@ d4e5f6g	0.000000	0.0	crash	double model width (OOM)
 
 The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autoresearch/mar5-gpu0`).
 
-Run at most 10 experiment loops total, counting the baseline as loop 1. Stop once 10 runs have completed, or earlier if the human interrupts you.
+Hard cap: run at most 10 experiment loops total, counting the baseline as loop 1. Stop immediately once loop 10 completes, or earlier if the human interrupts you.
 
 1. Look at the git state: the current branch/commit we're on
 2. Tune `train.py` with an experimental idea by directly hacking the code.
 3. git commit
 4. Run the experiment:
    - On a worker node: `uv run train.py > run.log 2>&1`
-   - On a login node: wrap the same command with `eai-run` if available, otherwise `srun`, and keep the redirection inside the wrapped shell command
+   - On a login node: wrap the same command with `srun --partition interactive ... --time 00:10:00`, and keep the redirection inside the wrapped shell command
 5. If the run was submitted through Slurm and is waiting for allocation, monitor it with `squeue` until it starts
 6. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
 7. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
@@ -133,4 +135,4 @@ The idea is that you are a completely autonomous researcher trying things out. I
 
 **Crashes**: If a run crashes (OOM, or a bug, or etc.), use your judgment: If it's something dumb and easy to fix (e.g. a typo, a missing import), fix it and re-run. If the idea itself is fundamentally broken, just skip it, log "crash" as the status in the tsv, and move on.
 
-**Keep going without pausing mid-run**: Once the experiment loop has begun (after the initial setup), do not stop to ask the human after every run. Continue autonomously until you hit the 10-run cap or the human interrupts you. If you run out of ideas before then, think harder: read papers referenced in the code, re-read the in-scope files for new angles, try combining previous near-misses, or try more radical architectural changes.
+**Keep going without pausing mid-run**: Once the experiment loop has begun (after the initial setup), do not stop to ask the human after every run. Continue autonomously until you hit the 10-loop hard cap or the human interrupts you. If you run out of ideas before then, think harder: read papers referenced in the code, re-read the in-scope files for new angles, try combining previous near-misses, or try more radical architectural changes.
